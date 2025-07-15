@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -17,11 +18,30 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy rest of the application
 COPY . .
 
-# Optional: Ensure templates and static folders exist
+# Create necessary directories
 RUN mkdir -p templates static
 
-# Expose port (Railway will provide this via PORT env var)
-EXPOSE $PORT
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_ENV=production
 
-# Run the app using Gunicorn with proper configuration
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
+# Expose port (Railway will override this with $PORT)
+EXPOSE 8000
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:$PORT/health || exit 1
+
+# Create a startup script
+RUN echo '#!/bin/bash\n\
+echo "Starting application..."\n\
+echo "PORT: $PORT"\n\
+echo "Current directory: $(pwd)"\n\
+echo "Files in current directory:"\n\
+ls -la\n\
+echo "Starting gunicorn..."\n\
+exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --log-level info --access-logfile - --error-logfile - app:app\n\
+' > /app/start.sh && chmod +x /app/start.sh
+
+# Use the startup script
+CMD ["/app/start.sh"]

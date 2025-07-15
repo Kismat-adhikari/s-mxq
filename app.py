@@ -1,4 +1,5 @@
 
+import datetime
 from flask import Flask, render_template, request, jsonify
 import os
 import time
@@ -311,13 +312,14 @@ def index():
     return render_template('index.html')
 
 # Healthcheck endpoint for Railway
-@app.route('/health')
-def health():
-    return {'status': 'healthy', 'service': 'youtube-transcriber'}, 200
-
-@app.route('/healthz')
-def healthz():
-    return 'OK', 200
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Railway"""
+    return {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'service': 'youtube-transcription'
+    }, 200
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
@@ -344,4 +346,5 @@ def status(job_id):
     return jsonify(result)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
