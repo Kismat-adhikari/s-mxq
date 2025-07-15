@@ -9,6 +9,7 @@ from pathlib import Path
 import threading
 import uuid
 import tempfile
+import subprocess # Added for ffmpeg conversion
 from dotenv import load_dotenv
 
 
@@ -40,11 +41,7 @@ def download_audio(youtube_url, output_path):
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': output_path,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
+
 
         # Add these options to fix 403 errors
         'extractor_args': {
@@ -65,14 +62,43 @@ def download_audio(youtube_url, output_path):
         # yt-dlp might add an extension, so we need to find the actual file path
         # This assumes the first file in the 'requested_downloads' is the one we want
         if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
-            final_path = info_dict['requested_downloads'][0]['filepath']
+            downloaded_file_path = info_dict['requested_downloads'][0]['filepath']
         else:
             # Fallback if requested_downloads is not available (e.g., for older yt-dlp versions or specific formats)
-            # This might not be perfectly accurate if yt-dlp changes the filename significantly
-            final_path = output_path
+            downloaded_file_path = output_path
 
-    print(f"Final downloaded audio path: {final_path}") # Debugging line
-    return final_path
+    print(f"Downloaded file path (before ffmpeg conversion): {downloaded_file_path}") # Debugging line
+
+    # Convert the downloaded file to MP3 using ffmpeg
+    mp3_output_path = output_path # Use the original output_path for the MP3 file
+    try:
+        import subprocess
+        command = [
+            'ffmpeg',
+            '-i', downloaded_file_path,
+            '-vn',
+            '-acodec', 'libmp3lame',
+            '-q:a', '2',
+            mp3_output_path
+        ]
+        subprocess.run(command, check=True, capture_output=True)
+        print(f"Successfully converted {downloaded_file_path} to {mp3_output_path} using ffmpeg.")
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg conversion failed: {e.stderr.decode()}")
+        raise Exception(f"FFmpeg conversion failed: {e.stderr.decode()}")
+    except FileNotFoundError:
+        raise Exception("ffmpeg not found. Please ensure ffmpeg is installed and in your system's PATH.")
+
+    # Clean up the original downloaded file if it's different from the MP3 output
+    if downloaded_file_path != mp3_output_path:
+        try:
+            os.remove(downloaded_file_path)
+            print(f"Cleaned up original downloaded file: {downloaded_file_path}")
+        except OSError as e:
+            print(f"Error cleaning up file {downloaded_file_path}: {e}")
+
+    print(f"Final processed audio path: {mp3_output_path}") # Debugging line
+    return mp3_output_path
 
 def upload_to_assemblyai(file_path, api_key):
     """Upload audio file to AssemblyAI"""
