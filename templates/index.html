@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Transcription</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .tabs {
+      display: flex;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+      border: 1px solid #e0e0e0;
+      width: 100%;
+      max-width: 500px;
+    }
+    .tab {
+      flex: 1;
+      padding: 12px 0;
+      background: #f7f7f7;
+      border: none;
+      cursor: pointer;
+      font-size: 1.1em;
+      font-weight: 500;
+      color: #444;
+      transition: background 0.2s, color 0.2s;
+      outline: none;
+    }
+    .tab.active {
+      background: #fff;
+      color: #1976d2;
+      box-shadow: 0 2px 8px rgba(25, 118, 210, 0.08);
+      z-index: 1;
+    }
+    .tab:not(.active):hover {
+      background: #ececec;
+      color: #1976d2;
+    }
+  </style>
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Transcription</h1>
+        
+        <form id="transcriptionForm">
+            <div class="input-group">
+                <label for="youtube_url">YouTube URL:</label>
+                <input type="url" id="youtube_url" name="youtube_url" 
+                       placeholder="https://www.youtube.com/watch?v=..." required>
+            </div>
+            
+            <div class="input-group">
+                <label for="language">Language (Optional):</label>
+                <select id="language" name="language">
+                    <option value="">Auto-detect language</option>
+                    <option value="en">English</option>
+                    <option value="hi">Hindi (हिंदी)</option>
+                    <option value="ne">Nepali (नेपाली)</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="it">Italian</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="ru">Russian</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="zh">Chinese</option>
+                </select>
+            </div>
+            
+            <button type="submit" id="submitBtn">
+                <span id="btnText">Transcribe Video</span>
+                <span id="loadingSpinner" class="loading" style="display: none;"></span>
+            </button>
+        </form>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="videoContainer" class="video-container">
+            <h3>Video Preview</h3>
+            <div class="video-embed">
+                <iframe id="videoEmbed" src="" allowfullscreen></iframe>
+            </div>
+        </div>
+        
+        <div id="transcriptContainer" class="transcript-container">
+            <div class="tabs">
+                <button class="tab active" id="mcqTab" onclick="showTab('mcq')">MCQ</button>
+                <button class="tab" id="flashcardsTab" onclick="showTab('flashcards')">Flashcards</button>
+            </div>
+            <div id="mcqContent">
+                <h3>Generated MCQs:</h3>
+                <div id="languageInfo" class="language-info" style="display: none;"></div>
+                <div id="mcqContainer" class="mcq-container"></div>
+            </div>
+            <div id="flashcardsContent" style="display:none;">
+                <h3 id="flashcardsHeader" style="display:none;">Generated Flashcards:</h3>
+            </div>
+        </div>
+        
+        <div id="errorMessage" class="error-message" style="display: none;"></div>
+    </div>
+
+    <script>
+        function showTab(tab) {
+            const mcqTab = document.getElementById('mcqTab');
+            const flashcardsTab = document.getElementById('flashcardsTab');
+            const mcqContent = document.getElementById('mcqContent');
+            const flashcardsContent = document.getElementById('flashcardsContent');
+            const flashcardsHeader = document.getElementById('flashcardsHeader');
+            if (tab === 'mcq') {
+                mcqTab.classList.add('active');
+                flashcardsTab.classList.remove('active');
+                mcqContent.style.display = 'block';
+                flashcardsContent.style.display = 'none';
+                flashcardsHeader.style.display = 'none';
+            } else {
+                mcqTab.classList.remove('active');
+                flashcardsTab.classList.add('active');
+                mcqContent.style.display = 'none';
+                flashcardsContent.style.display = 'block';
+                flashcardsHeader.style.display = 'block';
+            }
+        }
+        let currentJobId = null;
+        let statusInterval = null;
+
+        function extractVideoId(url) {
+            // Extract video ID from various YouTube URL formats
+            const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[7].length === 11) ? match[7] : null;
+        }
+
+        function embedVideo(url) {
+            const videoId = extractVideoId(url);
+            if (videoId) {
+                const videoContainer = document.getElementById('videoContainer');
+                const videoEmbed = document.getElementById('videoEmbed');
+                
+                videoEmbed.src = `https://www.youtube.com/embed/${videoId}`;
+                videoContainer.style.display = 'block';
+                
+                // Scroll to video
+                videoContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        document.getElementById('transcriptionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const url = document.getElementById('youtube_url').value;
+            const language = document.getElementById('language').value;
+            const submitBtn = document.getElementById('submitBtn');
+            const btnText = document.getElementById('btnText');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const statusDiv = document.getElementById('status');
+            const transcriptContainer = document.getElementById('transcriptContainer');
+            const errorMessage = document.getElementById('errorMessage');
+
+            // Embed video immediately when form is submitted
+            embedVideo(url);
+            
+            // Reset UI
+            submitBtn.disabled = true;
+            btnText.textContent = 'Processing...';
+            loadingSpinner.style.display = 'inline-block';
+            statusDiv.style.display = 'none';
+            transcriptContainer.style.display = 'none';
+            errorMessage.style.display = 'none';
+            
+            // Clear previous interval
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+            
+            try {
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        url: url,
+                        language: language || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentJobId = data.job_id;
+                    checkStatus();
+                } else {
+                    throw new Error(data.error || 'Failed to start transcription');
+                }
+                
+            } catch (error) {
+                showError(error.message);
+                resetButton();
+            }
+        });
+        
+        function checkStatus() {
+            const statusDiv = document.getElementById('status');
+            
+            statusInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${currentJobId}`);
+                    const data = await response.json();
+                    
+                    statusDiv.style.display = 'block';
+                    statusDiv.className = 'status ' + data.status;
+                    
+                    switch (data.status) {
+                        case 'downloading':
+                            statusDiv.textContent = 'Downloading audio from YouTube...';
+                            break;
+                        case 'uploading':
+                            statusDiv.textContent = 'Uploading audio to AssemblyAI...';
+                            break;
+                        case 'submitting':
+                            statusDiv.textContent = 'Submitting transcription request...';
+                            break;
+                        case 'processing':
+                            statusDiv.textContent = 'Processing transcription...';
+                            break;
+                        case 'generating_mcqs':
+                            statusDiv.textContent = 'Generating MCQs from transcript...';
+                            break;
+                        case 'completed':
+                            statusDiv.textContent = 'MCQs generated successfully!';
+                            showMCQs(data.mcqs, data.language_detected, data.language_confidence, data.audio_duration);
+                            clearInterval(statusInterval);
+                            resetButton();
+                            break;
+                        case 'error':
+                            showError(data.error);
+                            clearInterval(statusInterval);
+                            resetButton();
+                            break;
+                    }
+                } catch (error) {
+                    showError('Failed to check status');
+                    clearInterval(statusInterval);
+                    resetButton();
+                }
+            }, 2000);
+        }
+        
+        let mcqData = [];
+        let currentMCQ = 0;
+        let userAnswers = [];
+        let score = 0;
+
+        function showMCQs(mcqs, languageDetected, confidence, duration) {
+            const transcriptContainer = document.getElementById('transcriptContainer');
+            const languageInfo = document.getElementById('languageInfo');
+            const mcqContainer = document.getElementById('mcqContainer');
+            
+            // Show language information if available
+            if (languageDetected) {
+                const languageNames = {
+                    'en': 'English',
+                    'hi': 'Hindi (हिंदी)',
+                    'ne': 'Nepali (नेपाली)',
+                    'es': 'Spanish',
+                    'fr': 'French',
+                    'de': 'German',
+                    'it': 'Italian',
+                    'pt': 'Portuguese',
+                    'ru': 'Russian',
+                    'ja': 'Japanese',
+                    'ko': 'Korean',
+                    'zh': 'Chinese'
+                };
+                
+                const langName = languageNames[languageDetected] || languageDetected.toUpperCase();
+                const confidencePercent = Math.round((confidence || 0) * 100);
+                const durationStr = duration ? ` • Duration: ${Math.round(duration / 60)}:${String(Math.round(duration % 60)).padStart(2, '0')}` : '';
+                
+                languageInfo.innerHTML = `
+                    <strong>Language:</strong> ${langName} 
+                    <strong>Confidence:</strong> ${confidencePercent}%${durationStr}
+                `;
+                languageInfo.style.display = 'block';
+            } else {
+                languageInfo.style.display = 'none';
+            }
+            
+            // Handle MCQ errors
+            if (mcqs.error) {
+                mcqContainer.innerHTML = `
+                    <div class="error-message">
+                        <h4>Error generating MCQs:</h4>
+                        <p>${mcqs.error}</p>
+                    </div>
+                `;
+                transcriptContainer.style.display = 'block';
+                return;
+            }
+            
+            // Initialize MCQ data
+            mcqData = mcqs.mcqs || [];
+            currentMCQ = 0;
+            userAnswers = [];
+            score = 0;
+            
+            // Debug logging
+            console.log('MCQ Data:', mcqData);
+            
+            if (mcqData.length === 0) {
+                mcqContainer.innerHTML = '<p>No MCQs could be generated from this transcript.</p>';
+                transcriptContainer.style.display = 'block';
+                return;
+            }
+            
+            // Show first MCQ
+            displayMCQ(currentMCQ);
+            transcriptContainer.style.display = 'block';
+            
+            // Scroll to MCQs
+            setTimeout(() => {
+                transcriptContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        }
+        
+        function displayMCQ(index) {
+            const mcqContainer = document.getElementById('mcqContainer');
+            const mcq = mcqData[index];
+            
+            const mcqHTML = `
+                <div class="mcq-question">
+                    <h4>Question ${index + 1} of ${mcqData.length}: ${mcq.question}</h4>
+                    <div class="mcq-options" id="options-${index}">
+                        ${mcq.options.map((option, i) => {
+                            // Extract the letter more reliably
+                            const letter = option.trim().charAt(0);
+                            return `
+                                <div class="mcq-option" data-option="${letter}" onclick="selectOption(${index}, ${i})">
+                                    ${option}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    <div class="mcq-buttons">
+                        <button class="mcq-btn submit" onclick="submitAnswer(${index})" id="submit-${index}">
+                            Submit Answer
+                        </button>
+                        <button class="mcq-btn next" onclick="nextQuestion()" id="next-${index}" style="display: none;">
+                            ${index === mcqData.length - 1 ? 'Show Results' : 'Next Question'}
+                        </button>
+                    </div>
+                    <div class="mcq-explanation" id="explanation-${index}">
+                        <strong>Explanation:</strong> ${mcq.explanation}
+                    </div>
+                </div>
+            `;
+            
+            mcqContainer.innerHTML = mcqHTML;
+        }
+        
+        function selectOption(mcqIndex, optionIndex) {
+            const options = document.querySelectorAll(`#options-${mcqIndex} .mcq-option`);
+            options.forEach(option => option.classList.remove('selected'));
+            options[optionIndex].classList.add('selected');
+            
+            // Store the selected option letter
+            userAnswers[mcqIndex] = options[optionIndex].getAttribute('data-option');
+        }
+        
+        function submitAnswer(mcqIndex) {
+            const mcq = mcqData[mcqIndex];
+            const selectedAnswer = userAnswers[mcqIndex];
+            
+            if (!selectedAnswer) {
+                alert('Please select an answer first!');
+                return;
+            }
+            
+            const options = document.querySelectorAll(`#options-${mcqIndex} .mcq-option`);
+            const correctAnswer = mcq.correct_answer.trim().charAt(0).toUpperCase();
+            const selectedLetter = selectedAnswer.toUpperCase();
+            
+            // Disable all options and remove click handlers
+            options.forEach(option => {
+                option.classList.add('disabled');
+                option.onclick = null;
+            });
+            
+            // Show correct and incorrect answers
+            options.forEach(option => {
+                const optionLetter = option.getAttribute('data-option').toUpperCase();
+                
+                if (optionLetter === correctAnswer) {
+                    option.classList.add('correct');
+                } else if (optionLetter === selectedLetter && selectedLetter !== correctAnswer) {
+                    option.classList.add('incorrect');
+                }
+            });
+            
+            // Update score if answer is correct
+            if (selectedLetter === correctAnswer) {
+                score++;
+            }
+            
+            // Show explanation and next button
+            document.getElementById(`explanation-${mcqIndex}`).classList.add('show');
+            document.getElementById(`submit-${mcqIndex}`).style.display = 'none';
+            document.getElementById(`next-${mcqIndex}`).style.display = 'inline-block';
+        }
+
+        function nextQuestion() {
+            currentMCQ++;
+            if (currentMCQ < mcqData.length) {
+                displayMCQ(currentMCQ);
+            } else {
+                showResults();
+            }
+        }
+        
+        function showResults() {
+            const mcqContainer = document.getElementById('mcqContainer');
+            const percentage = Math.round((score / mcqData.length) * 100);
+            let message = '';
+            
+            if (percentage === 100) {
+                message = 'Perfect score! 🎉';
+            } else if (percentage >= 80) {
+                message = 'Great job! 🌟';
+            } else if (percentage >= 60) {
+                message = 'Good effort! 👍';
+            } else if (percentage >= 40) {
+                message = 'Keep practicing! 📚';
+            } else {
+                message = 'Don\'t give up! Try again! 💪';
+            }
+            
+            mcqContainer.innerHTML = `
+                <div class="mcq-score">
+                    <h3>Quiz Complete!</h3>
+                    <p>Your Score: ${score} out of ${mcqData.length} (${percentage}%)</p>
+                    <p style="margin-top: 10px; font-size: 1.2em;">${message}</p>
+                    <button class="mcq-btn submit" onclick="restartQuiz()" style="margin-top: 15px;">
+                        Restart Quiz
+                    </button>
+                </div>
+            `;
+        }
+        
+        function restartQuiz() {
+            currentMCQ = 0;
+            userAnswers = [];
+            score = 0;
+            displayMCQ(0);
+        }
+        
+        function showError(message) {
+            const errorMessage = document.getElementById('errorMessage');
+            const statusDiv = document.getElementById('status');
+            
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            statusDiv.style.display = 'none';
+        }
+        
+        function resetButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const btnText = document.getElementById('btnText');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
+            submitBtn.disabled = false;
+            btnText.textContent = 'Transcribe Video';
+            loadingSpinner.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
