@@ -9,7 +9,8 @@ from pathlib import Path
 import threading
 import uuid
 import tempfile
-import subprocess # Added for ffmpeg conversion
+
+
 from dotenv import load_dotenv
 
 
@@ -39,66 +40,41 @@ if not GROQ_API_KEY:
 def download_audio(youtube_url, output_path):
     """Download audio from YouTube video"""
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_path,
-
-
-        # Add these options to fix 403 errors
-        'extractor_args': {
-            'youtube': {
-                'skip': ['dash', 'hls']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        },
-        'cookiefile': None,
-
+            'format': 'bestaudio/best',
+            'outtmpl': output_path,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            # Add these options to fix 403 errors
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            'cookiefile': None,
     }
-    
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(youtube_url, download=True)
         print(f"yt-dlp info_dict: {info_dict}") # Debugging line
+
         # yt-dlp might add an extension, so we need to find the actual file path
         # This assumes the first file in the 'requested_downloads' is the one we want
+        actual_downloaded_path = output_path # Default to output_path
         if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
-            downloaded_file_path = info_dict['requested_downloads'][0]['filepath']
-        else:
-            # Fallback if requested_downloads is not available (e.g., for older yt-dlp versions or specific formats)
-            downloaded_file_path = output_path
+            actual_downloaded_path = info_dict['requested_downloads'][0]['filepath']
+        elif 'entries' in info_dict and info_dict['entries']:
+            # For playlists or multiple entries, try to find the first one
+            if info_dict['entries'][0] and 'requested_downloads' in info_dict['entries'][0]:
+                actual_downloaded_path = info_dict['entries'][0]['requested_downloads'][0]['filepath']
 
-    print(f"Downloaded file path (before ffmpeg conversion): {downloaded_file_path}") # Debugging line
-
-    # Convert the downloaded file to MP3 using ffmpeg
-    mp3_output_path = output_path # Use the original output_path for the MP3 file
-    try:
-        import subprocess
-        command = [
-            'ffmpeg',
-            '-i', downloaded_file_path,
-            '-vn',
-            '-acodec', 'libmp3lame',
-            '-q:a', '2',
-            mp3_output_path
-        ]
-        subprocess.run(command, check=True, capture_output=True)
-        print(f"Successfully converted {downloaded_file_path} to {mp3_output_path} using ffmpeg.")
-    except subprocess.CalledProcessError as e:
-        print(f"FFmpeg conversion failed: {e.stderr.decode()}")
-        raise Exception(f"FFmpeg conversion failed: {e.stderr.decode()}")
-    except FileNotFoundError:
-        raise Exception("ffmpeg not found. Please ensure ffmpeg is installed and in your system's PATH.")
-
-    # Clean up the original downloaded file if it's different from the MP3 output
-    if downloaded_file_path != mp3_output_path:
-        try:
-            os.remove(downloaded_file_path)
-            print(f"Cleaned up original downloaded file: {downloaded_file_path}")
-        except OSError as e:
-            print(f"Error cleaning up file {downloaded_file_path}: {e}")
-
-    print(f"Final processed audio path: {mp3_output_path}") # Debugging line
-    return mp3_output_path
+    print(f"Final processed audio path: {actual_downloaded_path}") # Debugging line
+    return actual_downloaded_path
 
 def upload_to_assemblyai(file_path, api_key):
     """Upload audio file to AssemblyAI"""
