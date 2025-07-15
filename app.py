@@ -22,6 +22,12 @@ transcription_results = {}
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+# Validate API keys
+if not ASSEMBLYAI_API_KEY:
+    raise ValueError("ASSEMBLYAI_API_KEY not found in environment variables. Please set it in your .env file.")
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found in environment variables. Please set it in your .env file.")
+
 def download_audio(youtube_url, output_path):
     """Download audio from YouTube video"""
     ydl_opts = {
