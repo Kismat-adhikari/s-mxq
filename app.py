@@ -67,13 +67,17 @@ def download_audio(youtube_url, output_path):
 
 def upload_to_assemblyai(file_path, api_key):
     """Upload audio file to AssemblyAI"""
-    headers = {'authorization': api_key}
+    headers = {
+        'authorization': api_key,
+        'transfer-encoding': 'chunked' # Add chunked transfer encoding
+    }
     
     with open(file_path, 'rb') as f:
+        f.seek(0) # Reset file pointer to the beginning
         response = requests.post(
             'https://api.assemblyai.com/v2/upload',
             headers=headers,
-            files={'file': f}
+            data=f # Pass file object directly as data
         )
     
     if response.status_code == 200:
