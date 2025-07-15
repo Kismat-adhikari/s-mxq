@@ -5,6 +5,7 @@ import os
 import time
 import requests
 import yt_dlp
+import subprocess
 from pathlib import Path
 import threading
 import uuid
@@ -39,42 +40,103 @@ if not GROQ_API_KEY:
 
 def download_audio(youtube_url, output_path):
     """Download audio from YouTube video"""
+    # Create a temporary file for yt-dlp to download to
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as tmp_file:
+        temp_file_path = tmp_file.name
+
     ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_path,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            # Add these options to fix 403 errors
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls']
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            },
-            'cookiefile': None,
+        'format': 'bestaudio/best', # Download best audio
+        'extract_audio': True,  # Ensure only audio is extracted
+        'audio_format': 'wav', # Extract audio as WAV
+        'outtmpl': temp_file_path, # Download to temporary file
+        'noplaylist': True, # Only download single video
+        'keepvideo': False, # Don't keep the video file
+
+        # Add these options to fix 403 errors
+        'extractor_args': {
+            'youtube': {
+                'skip': ['dash', 'hls']
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
+        'cookiefile': None,
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(youtube_url, download=True)
-        print(f"yt-dlp info_dict: {info_dict}") # Debugging line
+    downloaded_file_path = None
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(youtube_url, download=True)
+            print(f"yt-dlp info_dict: {info_dict}") # Debugging line
 
-        # yt-dlp might add an extension, so we need to find the actual file path
-        # This assumes the first file in the 'requested_downloads' is the one we want
-        actual_downloaded_path = output_path # Default to output_path
-        if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
-            actual_downloaded_path = info_dict['requested_downloads'][0]['filepath']
-        elif 'entries' in info_dict and info_dict['entries']:
-            # For playlists or multiple entries, try to find the first one
-            if info_dict['entries'][0] and 'requested_downloads' in info_dict['entries'][0]:
-                actual_downloaded_path = info_dict['entries'][0]['requested_downloads'][0]['filepath']
+            # yt-dlp might add an extension, so we need to find the actual file path
+            if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
+                downloaded_file_path = info_dict['requested_downloads'][0]['filepath']
+            elif 'entries' in info_dict and info_dict['entries']:
+                if info_dict['entries'][0] and 'requested_downloads' in info_dict['entries'][0]:
+                    downloaded_file_path = info_dict['entries'][0]['requested_downloads'][0]['filepath']
+            else:
+                # Fallback if requested_downloads is not present (e.g., for some errors)
+                downloaded_file_path = temp_file_path
 
-    print(f"Final processed audio path: {actual_downloaded_path}") # Debugging line
-    return actual_downloaded_path
+        print(f"Downloaded file path (original format): {downloaded_file_path}") # Debugging line
+
+        # Check if the downloaded file exists and is not empty
+        if not os.path.exists(downloaded_file_path):
+            raise FileNotFoundError(f"Downloaded audio file not found: {downloaded_file_path}")
+        file_size = os.path.getsize(downloaded_file_path);
+        if file_size == 0:
+            raise ValueError(f"Downloaded audio file is empty: {downloaded_file_path}")
+        print(f"Downloaded file size: {file_size} bytes") # Debugging line
+
+        # Debug: Use ffprobe to inspect the downloaded WAV file
+        try:
+            ffprobe_command = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'stream=codec_name,codec_type',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                downloaded_file_path
+            ]
+            ffprobe_output = subprocess.run(ffprobe_command, check=True, capture_output=True, text=True)
+            print(f"ffprobe output for downloaded WAV: {ffprobe_output.stdout.strip()}")
+            if "audio" not in ffprobe_output.stdout:
+                raise Exception(f"ffprobe did not detect an audio stream in {downloaded_file_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"ffprobe inspection failed: {e.stderr.strip()}")
+            raise Exception(f"ffprobe inspection failed on downloaded WAV: {e.stderr.strip()}")
+        except FileNotFoundError:
+            raise Exception("ffprobe not found. Please ensure ffprobe is installed and in your system's PATH.")
+
+        # Convert the downloaded file to MP3 using ffmpeg
+        mp3_output_path = output_path # Use the original output_path for the MP3 file
+        try:
+            command = [
+                'ffmpeg',
+                '-f', 'wav',
+                '-i', downloaded_file_path,
+                '-vn',
+                '-acodec', 'libmp3lame',
+                    '-q:a', '2',
+                    mp3_output_path
+                ]
+            subprocess.run(command, check=True, capture_output=True)
+            print(f"Successfully converted {downloaded_file_path} to {mp3_output_path} using ffmpeg.")
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg conversion failed: {e.stderr.decode()}")
+            raise Exception(f"FFmpeg conversion failed: {e.stderr.decode()}")
+        except FileNotFoundError:
+            raise Exception("ffmpeg not found. Please ensure ffmpeg is installed and in your system's PATH.")
+
+        print(f"Final processed audio path: {mp3_output_path}") # Debugging line
+        return mp3_output_path
+    finally:
+        # Clean up the temporary file
+        if downloaded_file_path and os.path.exists(downloaded_file_path):
+            os.remove(downloaded_file_path)
+        if temp_file_path and os.path.exists(temp_file_path) and temp_file_path != downloaded_file_path:
+            os.remove(temp_file_path)
 
 def upload_to_assemblyai(file_path, api_key):
     """Upload audio file to AssemblyAI"""
