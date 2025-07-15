@@ -311,6 +311,10 @@ def index():
     return render_template('index.html')
 
 # Healthcheck endpoint for Railway
+@app.route('/health')
+def health():
+    return {'status': 'healthy', 'service': 'youtube-transcriber'}, 200
+
 @app.route('/healthz')
 def healthz():
     return 'OK', 200

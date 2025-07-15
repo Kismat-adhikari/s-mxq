@@ -20,8 +20,8 @@ COPY . .
 # Optional: Ensure templates and static folders exist
 RUN mkdir -p templates static
 
-# Expose port (used by Railway)
-EXPOSE 5000
+# Expose port (Railway will provide this via PORT env var)
+EXPOSE $PORT
 
-# Run the app using Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Run the app using Gunicorn with proper configuration
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
