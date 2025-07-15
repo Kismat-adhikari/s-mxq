@@ -39,13 +39,13 @@ def download_audio(youtube_url, output_path):
     """Download audio from YouTube video"""
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': output_path.replace('.mp3', '.%(ext)s'),
+        'outtmpl': output_path,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'quiet': True,
+
         # Add these options to fix 403 errors
         'extractor_args': {
             'youtube': {
@@ -56,30 +56,44 @@ def download_audio(youtube_url, output_path):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
         'cookiefile': None,
-        'no_warnings': True,
-        'ignoreerrors': True,
+
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_url])
-    
-    return output_path
+        info_dict = ydl.extract_info(youtube_url, download=True)
+        print(f"yt-dlp info_dict: {info_dict}") # Debugging line
+        # yt-dlp might add an extension, so we need to find the actual file path
+        # This assumes the first file in the 'requested_downloads' is the one we want
+        if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
+            final_path = info_dict['requested_downloads'][0]['filepath']
+        else:
+            # Fallback if requested_downloads is not available (e.g., for older yt-dlp versions or specific formats)
+            # This might not be perfectly accurate if yt-dlp changes the filename significantly
+            final_path = output_path
+
+    print(f"Final downloaded audio path: {final_path}") # Debugging line
+    return final_path
 
 def upload_to_assemblyai(file_path, api_key):
     """Upload audio file to AssemblyAI"""
     headers = {
         'authorization': api_key,
-        'transfer-encoding': 'chunked' # Add chunked transfer encoding
+        'Content-Type': 'application/octet-stream'
+
     }
     
     with open(file_path, 'rb') as f:
-        f.seek(0) # Reset file pointer to the beginning
+        file_content = f.read()
+        print(f"Attempting to upload file of size: {len(file_content)} bytes") # Debugging line
+        headers['Content-Length'] = str(len(file_content))
         response = requests.post(
             'https://api.assemblyai.com/v2/upload',
             headers=headers,
-            data=f # Pass file object directly as data
+            data=file_content
         )
     
+    print(f"AssemblyAI upload response status: {response.status_code}") # Debugging line
+    print(f"AssemblyAI upload response text: {response.text}") # Debugging line
     if response.status_code == 200:
         return response.json()['upload_url']
     else:
@@ -300,15 +314,25 @@ def cleanup_file(file_path):
 def process_transcription(youtube_url, job_id, language_code=None):
     """Background task to process transcription"""
     # Use tempfile to create a temporary file that is automatically cleaned up
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio_file:
-        audio_file_path = temp_audio_file.name
+    temp_audio_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+    audio_file_path = temp_audio_file.name
+    temp_audio_file.close() # Close the file handle so yt-dlp can write to it
 
     try:
         transcription_results[job_id] = {'status': 'downloading'}
-        download_audio(youtube_url, audio_file_path)
+        actual_downloaded_path = download_audio(youtube_url, audio_file_path)
+        
+        # Debugging: Check if the downloaded file exists and has content
+        if os.path.exists(actual_downloaded_path):
+            file_size = os.path.getsize(actual_downloaded_path)
+            print(f"Downloaded audio file size: {file_size} bytes at {actual_downloaded_path}")
+            if file_size == 0:
+                raise Exception("Downloaded audio file is empty.")
+        else:
+            raise Exception("Downloaded audio file does not exist.")
         
         transcription_results[job_id] = {'status': 'uploading'}
-        audio_url = upload_to_assemblyai(audio_file_path, ASSEMBLYAI_API_KEY)
+        audio_url = upload_to_assemblyai(actual_downloaded_path, ASSEMBLYAI_API_KEY)
         
         transcription_results[job_id] = {'status': 'submitting'}
         transcript_id = submit_transcription(audio_url, ASSEMBLYAI_API_KEY, language_code)
@@ -323,7 +347,7 @@ def process_transcription(youtube_url, job_id, language_code=None):
         }
     
     finally:
-        cleanup_file(audio_file_path)
+        cleanup_file(actual_downloaded_path)
 
 
 @app.route('/')
