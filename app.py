@@ -8,6 +8,7 @@ import yt_dlp
 from pathlib import Path
 import threading
 import uuid
+import tempfile
 from dotenv import load_dotenv
 
 
@@ -294,14 +295,16 @@ def cleanup_file(file_path):
 
 def process_transcription(youtube_url, job_id, language_code=None):
     """Background task to process transcription"""
-    audio_file = f"temp_audio_{job_id}.mp3"
-    
+    # Use tempfile to create a temporary file that is automatically cleaned up
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio_file:
+        audio_file_path = temp_audio_file.name
+
     try:
         transcription_results[job_id] = {'status': 'downloading'}
-        download_audio(youtube_url, audio_file)
+        download_audio(youtube_url, audio_file_path)
         
         transcription_results[job_id] = {'status': 'uploading'}
-        audio_url = upload_to_assemblyai(audio_file, ASSEMBLYAI_API_KEY)
+        audio_url = upload_to_assemblyai(audio_file_path, ASSEMBLYAI_API_KEY)
         
         transcription_results[job_id] = {'status': 'submitting'}
         transcript_id = submit_transcription(audio_url, ASSEMBLYAI_API_KEY, language_code)
@@ -316,7 +319,7 @@ def process_transcription(youtube_url, job_id, language_code=None):
         }
     
     finally:
-        cleanup_file(audio_file)
+        cleanup_file(audio_file_path)
 
 
 @app.route('/')
