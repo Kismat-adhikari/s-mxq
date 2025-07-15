@@ -305,9 +305,15 @@ def process_transcription(youtube_url, job_id, language_code=None):
     finally:
         cleanup_file(audio_file)
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+# Healthcheck endpoint for Railway
+@app.route('/healthz')
+def healthz():
+    return 'OK', 200
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
