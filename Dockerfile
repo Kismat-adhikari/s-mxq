@@ -15,6 +15,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip freeze
+RUN ffmpeg -version
+RUN yt-dlp --version
 
 # Copy rest of the application
 COPY . .
@@ -33,16 +35,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:$PORT/health || exit 1
 
-# Create a startup script
-RUN echo '#!/bin/bash\n\
-echo "Starting application..."\n\
-echo "PORT: $PORT"\n\
-echo "Current directory: $(pwd)"\n\
-echo "Files in current directory:"\n\
-ls -la\n\
-echo "Starting gunicorn..."\n\
-exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --log-level info --access-logfile - --error-logfile - --reload app:app\n\
-' > /app/start.sh && chmod +x /app/start.sh
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 --log-level info --access-logfile - --error-logfile - app:app
 
-# Use the startup script
-CMD ["/app/start.sh"]
+

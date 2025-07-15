@@ -14,6 +14,12 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
+@app.errorhandler(500)
+def internal_server_error(e):
+    # Log the error for debugging purposes
+    app.logger.exception('An internal server error occurred')
+    return jsonify(error='Internal Server Error', message=str(e)), 500
+
 # Store transcription results in memory (use Redis/database in production)
 transcription_results = {}
 
@@ -321,11 +327,11 @@ def index():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Railway"""
-    return {
+    return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'service': 'youtube-transcription'
-    }, 200
+    }), 200
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
@@ -350,7 +356,3 @@ def transcribe():
 def status(job_id):
     result = transcription_results.get(job_id, {'status': 'not_found'})
     return jsonify(result)
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
